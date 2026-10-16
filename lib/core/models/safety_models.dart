@@ -24,40 +24,60 @@ String safetyStatusToServer(SafetyStatus status) {
 class RoomResolver {
   const RoomResolver._();
 
-  static const bedroom2 = '침실-2';
+  static const livingSpace = '침실 · 생활공간';
   static const kitchen = '주방';
-  static const living = '거실';
   static const bathroom = '욕실';
-  static const bedroom = '침실-1';
   static const entrance = '현관';
   static const unknown = '확인 필요';
 
-  static const all = [bedroom2, kitchen, living, bathroom, bedroom, entrance];
+  // Existing callers share the single living/sleeping area in this plan.
+  static const living = livingSpace;
+  static const bedroom = livingSpace;
+  static const bedroom2 = livingSpace;
+  static const all = [bathroom, entrance, kitchen, livingSpace];
 
-  static String normalize(dynamic raw, double x, double y) {
+  static String nameFor(dynamic raw) {
     final value = raw?.toString().trim();
-    if (value == null || looksBrokenText(value)) return fromPosition(x, y);
+    if (value == null || looksBrokenText(value)) return unknown;
     if (all.contains(value)) return value;
-
-    if (value.contains('거실')) return living;
-    if (value.contains('주방')) return kitchen;
     if (value.contains('욕실') || value.contains('화장실')) return bathroom;
     if (value.contains('현관')) return entrance;
-    if (value.contains('침실-2')) return bedroom2;
-    if (value.contains('침실') || value.contains('방')) return bedroom;
+    if (value.contains('주방')) return kitchen;
+    if (value.contains('침실') ||
+        value.contains('거실') ||
+        value.contains('생활공간') ||
+        value == '방') {
+      return livingSpace;
+    }
+    return unknown;
+  }
 
-    return fromPosition(x, y);
+  static String normalize(dynamic raw, double x, double y) {
+    // Live coordinates take precedence over room labels from the old plan.
+    if (x.isFinite && y.isFinite) return fromPosition(x, y);
+    return nameFor(raw);
   }
 
   static String fromPosition(double x, double y) {
-    // 기준 도면: 일반 가정집형 실내측위 도면.
-    // ESP32-1을 좌상단 원점으로 보고, 앱은 0.0~1.0 정규화 좌표를 사용한다.
-    if (x < 0.50 && y < 0.39) return bedroom2;
-    if (x >= 0.50 && y < 0.255) return kitchen;
-    if (x < 0.50 && y < 0.565) return living;
-    if (x >= 0.50 && x < 0.72 && y < 0.565) return bathroom;
-    if (x < 0.50 && y >= 0.565) return bedroom;
-    return entrance;
+    if (!x.isFinite || !y.isFinite) return unknown;
+    // Normalized inside-wall rectangle: image pixels (258,243)..(766,1284).
+    // The middle door is near y=.36; the bathroom wall is near x=.43.
+    final px = x.clamp(0.0, 1.0);
+    final py = y.clamp(0.0, 1.0);
+    if (py >= 0.36) return livingSpace;
+    if (px < 0.43) return bathroom;
+    if (px < 0.84 && py < 0.10) return entrance;
+    return kitchen;
+  }
+
+  static Offset? representativePoint(dynamic room) {
+    return switch (nameFor(room)) {
+      bathroom => const Offset(0.22, 0.18),
+      entrance => const Offset(0.68, 0.045),
+      kitchen => const Offset(0.67, 0.24),
+      livingSpace => const Offset(0.55, 0.60),
+      _ => null,
+    };
   }
 }
 
@@ -92,7 +112,12 @@ String cleanText(dynamic value, String fallback) {
   return text!;
 }
 
-double boundedDouble(dynamic value, double fallback, {double min = 0.0, double max = 1.0}) {
+double boundedDouble(
+  dynamic value,
+  double fallback, {
+  double min = 0.0,
+  double max = 1.0,
+}) {
   final parsed = switch (value) {
     num number => number.toDouble(),
     String text => double.tryParse(text),
@@ -101,9 +126,14 @@ double boundedDouble(dynamic value, double fallback, {double min = 0.0, double m
   return (parsed ?? fallback).clamp(min, max).toDouble();
 }
 
-double normalizedDouble(dynamic value, double fallback) => boundedDouble(value, fallback);
+double normalizedDouble(dynamic value, double fallback) =>
+    boundedDouble(value, fallback);
 
-double? optionalBoundedDouble(dynamic value, {double min = 0.0, double max = 1.0}) {
+double? optionalBoundedDouble(
+  dynamic value, {
+  double min = 0.0,
+  double max = 1.0,
+}) {
   final parsed = switch (value) {
     num number => number.toDouble(),
     String text => double.tryParse(text),
@@ -123,7 +153,12 @@ double breathingRateForStatus(SafetyStatus status) {
 }
 
 class Guardian {
-  const Guardian({required this.id, required this.name, required this.phone, required this.role});
+  const Guardian({
+    required this.id,
+    required this.name,
+    required this.phone,
+    required this.role,
+  });
 
   factory Guardian.fromJson(Map<String, dynamic> json) {
     final id = switch (json['id']) {
@@ -135,7 +170,10 @@ class Guardian {
     return Guardian(
       id: id,
       name: cleanText(json['name'], id == 1 ? '김영희 어르신' : '김주환 보호자'),
-      phone: cleanText(json['phone'], id == 1 ? '010-0000-0000' : '010-1234-5678'),
+      phone: cleanText(
+        json['phone'],
+        id == 1 ? '010-0000-0000' : '010-1234-5678',
+      ),
       role: cleanText(json['role'], id == 1 ? '피보호자' : '1순위 보호자'),
     );
   }
@@ -145,7 +183,12 @@ class Guardian {
   final String phone;
   final String role;
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'phone': phone, 'role': role};
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'phone': phone,
+    'role': role,
+  };
 }
 
 class EmergencyInfo {
@@ -211,8 +254,14 @@ class AlertEvent {
       _ => SafetyStatus.normal,
     };
     final rawRoom = cleanText(json['room'], RoomResolver.unknown);
-    final room = RoomResolver.all.contains(rawRoom) ? rawRoom : RoomResolver.unknown;
+    final eventX = double.tryParse(json['x']?.toString() ?? '');
+    final eventY = double.tryParse(json['y']?.toString() ?? '');
+    final room =
+        eventX != null && eventY != null && eventX.isFinite && eventY.isFinite
+        ? RoomResolver.fromPosition(eventX, eventY)
+        : RoomResolver.nameFor(rawRoom);
     final fallback = AlertEvent.fromStatus(status, room: room);
+    final sourceMessage = cleanText(json['message'], fallback.message);
 
     return AlertEvent(
       id: switch (json['id']) {
@@ -222,7 +271,12 @@ class AlertEvent {
       },
       status: status,
       title: cleanText(json['title'], fallback.title),
-      message: cleanText(json['message'], fallback.message),
+      message:
+          room != RoomResolver.unknown &&
+              rawRoom != RoomResolver.unknown &&
+              !sourceMessage.contains(room)
+          ? sourceMessage.replaceAll(rawRoom, room)
+          : sourceMessage,
       time: cleanText(json['time'], fallback.time),
       room: room,
       urgent: json['urgent'] == true || status == SafetyStatus.danger,
@@ -230,7 +284,11 @@ class AlertEvent {
     );
   }
 
-  factory AlertEvent.fromStatus(SafetyStatus status, {required String room, DateTime? at}) {
+  factory AlertEvent.fromStatus(
+    SafetyStatus status, {
+    required String room,
+    DateTime? at,
+  }) {
     final time = formatKoreanTime(at ?? DateTime.now());
     return switch (status) {
       SafetyStatus.danger => AlertEvent(
@@ -343,10 +401,17 @@ class SafetySnapshot {
         Offset(0.55, 0.72),
         Offset(0.76, 0.85),
       ],
-      alerts: [AlertEvent.fromStatus(SafetyStatus.normal, room: RoomResolver.living)],
+      alerts: [
+        AlertEvent.fromStatus(SafetyStatus.normal, room: RoomResolver.living),
+      ],
       guardians: const [
         Guardian(id: 1, name: '김영희 어르신', phone: '010-0000-0000', role: '피보호자'),
-        Guardian(id: 2, name: '김주환 보호자', phone: '010-1234-5678', role: '1순위 보호자'),
+        Guardian(
+          id: 2,
+          name: '김주환 보호자',
+          phone: '010-1234-5678',
+          role: '1순위 보호자',
+        ),
       ],
       emergencyInfo: EmergencyInfo.defaultInfo,
       settings: const {
@@ -399,7 +464,9 @@ class SafetySnapshot {
     final alerts = json['alerts'] is List
         ? (json['alerts'] as List)
               .whereType<Map>()
-              .map((item) => AlertEvent.fromJson(Map<String, dynamic>.from(item)))
+              .map(
+                (item) => AlertEvent.fromJson(Map<String, dynamic>.from(item)),
+              )
               .take(40)
               .toList()
         : fallback.alerts;
@@ -412,7 +479,9 @@ class SafetySnapshot {
         : fallback.guardians;
 
     final emergencyInfo = json['emergencyInfo'] is Map
-        ? EmergencyInfo.fromJson(Map<String, dynamic>.from(json['emergencyInfo'] as Map))
+        ? EmergencyInfo.fromJson(
+            Map<String, dynamic>.from(json['emergencyInfo'] as Map),
+          )
         : fallback.emergencyInfo;
 
     final settings = json['settings'] is Map
@@ -424,14 +493,22 @@ class SafetySnapshot {
     final status = safetyStatusFrom(json['status']);
     return fallback.copyWith(
       status: status,
-      room: cleanText(json['room'], fallback.room),
+      room: json['locationSharingEnabled'] == false
+          ? cleanText(json['room'], '위치 공유 꺼짐')
+          : RoomResolver.normalize(
+              json['room'],
+              normalizedDouble(json['x'], fallback.x),
+              normalizedDouble(json['y'], fallback.y),
+            ),
       pose: cleanText(json['pose'], fallback.pose),
       x: normalizedDouble(json['x'], fallback.x),
       y: normalizedDouble(json['y'], fallback.y),
       confidence: normalizedDouble(json['confidence'], fallback.confidence),
       breathingRate:
           optionalBoundedDouble(
-            json['breathingRate'] ?? json['respirationRate'] ?? json['breathRate'],
+            json['breathingRate'] ??
+                json['respirationRate'] ??
+                json['breathRate'],
             min: 6,
             max: 36,
           ) ??
@@ -485,7 +562,9 @@ class SafetySnapshot {
   bool get isLocationHidden => !locationSharingEnabled;
   bool get isLiveSensorSource {
     final source = dataSource.toLowerCase();
-    return source.contains('jetson') || source.contains('esp') || source.contains('sensor');
+    return source.contains('jetson') ||
+        source.contains('esp') ||
+        source.contains('sensor');
   }
 
   String get levelLabel {
@@ -601,7 +680,9 @@ class SafetySnapshot {
 
   String get breathingAction {
     if (status == SafetyStatus.danger) return '통증이나 숨참이 있으면 바로 도움을 요청하세요.';
-    if (breathingRate < 12 || breathingRate > 22) return '불편함이 계속되면 보호자에게 알려 주세요.';
+    if (breathingRate < 12 || breathingRate > 22) {
+      return '불편함이 계속되면 보호자에게 알려 주세요.';
+    }
     if (breathingConfidence < 0.55) return '센서 주변에서 잠시 편하게 머물러 주세요.';
     return '편하게 호흡하면서 평소처럼 지내도 괜찮아요.';
   }
@@ -617,7 +698,9 @@ class SafetySnapshot {
     if (source == 'sensor' || source.contains('sensor')) return '실제 센서 데이터';
     if (source == 'admin') return '관리자 수동 입력';
     if (source == 'app-demo' || source == 'scenario') return '앱 시연 데이터';
-    if (source == 'mock' || source == 'boot' || source == 'reset') return '시연용 mock 데이터';
+    if (source == 'mock' || source == 'boot' || source == 'reset') {
+      return '시연용 mock 데이터';
+    }
     if (source == 'care-recipient') return '피보호자 확인 응답';
     if (source == 'cache') return '앱에 저장된 마지막 상태';
     return cleanText(dataSource, '데이터 출처 확인 중');
@@ -691,7 +774,8 @@ class SafetySnapshot {
       breathingRate: breathingRate ?? this.breathingRate,
       breathingConfidence: breathingConfidence ?? this.breathingConfidence,
       breathingEstimated: breathingEstimated ?? this.breathingEstimated,
-      locationSharingEnabled: locationSharingEnabled ?? this.locationSharingEnabled,
+      locationSharingEnabled:
+          locationSharingEnabled ?? this.locationSharingEnabled,
       serverConnected: serverConnected ?? this.serverConnected,
       connectionNote: connectionNote ?? this.connectionNote,
       dataSource: dataSource ?? this.dataSource,
@@ -716,7 +800,9 @@ String poseFromStatus(SafetyStatus status) {
 
 String formatKoreanTime(DateTime time) {
   final prefix = time.hour < 12 ? '오전' : '오후';
-  final hour = time.hour == 0 ? 12 : (time.hour > 12 ? time.hour - 12 : time.hour);
+  final hour = time.hour == 0
+      ? 12
+      : (time.hour > 12 ? time.hour - 12 : time.hour);
   final minute = time.minute.toString().padLeft(2, '0');
   return '$prefix $hour:$minute';
 }

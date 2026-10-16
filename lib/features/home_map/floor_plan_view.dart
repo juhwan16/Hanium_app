@@ -6,11 +6,21 @@ import '../../app/app_theme.dart';
 import '../../core/models/safety_models.dart';
 import '../../shared/ui/app_ui.dart';
 
-const _viewAspectRatio = 0.78;
-const _planAspectRatio = 480 / 550;
+const _viewAspectRatio = 0.52;
+const _referenceImageSize = Size(1024, 1536);
+// Keep the entrance door and window; omit the poster heading and footer.
+const _referenceCrop = Rect.fromLTWH(204, 145, 616, 1255);
+// Normalized location coordinates cover the inside of the exterior walls.
+const _referenceInterior = Rect.fromLTRB(258, 243, 766, 1284);
+const _floorPlanAsset = 'assets/images/home_floor_plan_reference.png';
 
 class FloorPlanView extends StatelessWidget {
-  const FloorPlanView({required this.snapshot, this.compact = false, this.showPath, super.key});
+  const FloorPlanView({
+    required this.snapshot,
+    this.compact = false,
+    this.showPath,
+    super.key,
+  });
 
   final SafetySnapshot snapshot;
   final bool compact;
@@ -19,55 +29,160 @@ class FloorPlanView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final shouldShowPath =
-        snapshot.locationSharingEnabled && (showPath ?? snapshot.settingBool('showPath', true));
+        snapshot.locationSharingEnabled &&
+        (showPath ?? snapshot.settingBool('showPath', true));
 
-    return AspectRatio(
-      aspectRatio: _viewAspectRatio,
+    return LayoutBuilder(
+      builder: (context, viewport) {
+        final screen = MediaQuery.sizeOf(context);
+        final width = viewport.hasBoundedWidth
+            ? viewport.maxWidth
+            : screen.width;
+        final preferredHeight = math.min(
+          width / _viewAspectRatio,
+          screen.height * (compact ? 0.42 : 0.56),
+        );
+        return SizedBox(
+          width: width,
+          height: viewport.constrainHeight(preferredHeight),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final size = Size(constraints.maxWidth, constraints.maxHeight);
+              final imageRect = _imageRectFor(size, compact: compact);
+              final planRect = _planRectFor(imageRect);
+              final personPoint = _personPoint(snapshot);
+              final personPosition = _toPlanOffset(planRect, personPoint);
+              final markerSize = math.min(
+                44.0,
+                math.max(0.0, math.min(size.width, size.height) - 16),
+              );
+              final markerInset = math.min(
+                8.0,
+                math.min(size.width, size.height) / 2,
+              );
+
+              return ClipRRect(
+                borderRadius: BorderRadius.circular(compact ? 24 : 30),
+                child: Stack(
+                  clipBehavior: Clip.hardEdge,
+                  children: [
+                    const Positioned.fill(
+                      child: ColoredBox(color: Colors.white),
+                    ),
+                    Positioned.fromRect(
+                      rect: imageRect,
+                      child: const _ReferenceFloorPlan(),
+                    ),
+                    if (shouldShowPath)
+                      Positioned.fill(
+                        child: CustomPaint(
+                          painter: _MovementOverlayPainter(
+                            planRect: planRect,
+                            path: _movementPath(snapshot),
+                            color: _trailColor(snapshot.status),
+                          ),
+                        ),
+                      ),
+                    if (snapshot.locationSharingEnabled)
+                      AnimatedPositioned(
+                        duration: const Duration(milliseconds: 180),
+                        curve: Curves.easeOutCubic,
+                        left: (personPosition.dx - markerSize / 2)
+                            .clamp(
+                              markerInset,
+                              math.max(
+                                markerInset,
+                                size.width - markerSize - markerInset,
+                              ),
+                            )
+                            .toDouble(),
+                        top: (personPosition.dy - markerSize / 2)
+                            .clamp(
+                              markerInset,
+                              math.max(
+                                markerInset,
+                                size.height - markerSize - markerInset,
+                              ),
+                            )
+                            .toDouble(),
+                        child: SizedBox(
+                          width: markerSize,
+                          height: markerSize,
+                          child: FittedBox(
+                            child: SizedBox(
+                              width: 44,
+                              height: 44,
+                              child: MiniPersonMarker(snapshot: snapshot),
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (!snapshot.locationSharingEnabled)
+                      const _LocationHiddenOverlay(),
+                  ],
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+}
+
+Rect _imageRectFor(Size size, {required bool compact}) {
+  final padding = compact ? 6.0 : 10.0;
+  final availableWidth = math.max(0.0, size.width - padding * 2);
+  final availableHeight = math.max(0.0, size.height - padding * 2);
+  final scale = math.min(
+    availableWidth / _referenceCrop.width,
+    availableHeight / _referenceCrop.height,
+  );
+  return Rect.fromCenter(
+    center: Offset(size.width / 2, size.height / 2),
+    width: _referenceCrop.width * scale,
+    height: _referenceCrop.height * scale,
+  );
+}
+
+Rect _planRectFor(Rect imageRect) {
+  final scale = imageRect.width / _referenceCrop.width;
+  return Rect.fromLTWH(
+    imageRect.left + (_referenceInterior.left - _referenceCrop.left) * scale,
+    imageRect.top + (_referenceInterior.top - _referenceCrop.top) * scale,
+    _referenceInterior.width * scale,
+    _referenceInterior.height * scale,
+  );
+}
+
+class _ReferenceFloorPlan extends StatelessWidget {
+  const _ReferenceFloorPlan();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label:
+          '우리집 평면도. 위쪽 왼편 욕실, 위쪽 오른편 현관과 주방, '
+          '중문 아래 침실과 생활공간. 아래쪽 창문.',
+      image: true,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final size = Size(constraints.maxWidth, constraints.maxHeight);
-          final planRect = _planRectFor(size, compact: compact);
-          final personPoint = _personPoint(snapshot);
-          final personPosition = _toPlanOffset(planRect, personPoint);
-          const markerSize = 44.0;
-
-          return ClipRRect(
-            borderRadius: BorderRadius.circular(compact ? 24 : 30),
+          final scale = constraints.maxWidth / _referenceCrop.width;
+          return ClipRect(
             child: Stack(
-              clipBehavior: Clip.hardEdge,
               children: [
-                Positioned.fill(
-                  child: CustomPaint(
-                    painter: _FloorPlanPainter(planRect: planRect, compact: compact),
+                Positioned(
+                  left: -_referenceCrop.left * scale,
+                  top: -_referenceCrop.top * scale,
+                  width: _referenceImageSize.width * scale,
+                  height: _referenceImageSize.height * scale,
+                  child: Image.asset(
+                    _floorPlanAsset,
+                    fit: BoxFit.fill,
+                    filterQuality: FilterQuality.high,
+                    excludeFromSemantics: true,
                   ),
                 ),
-                if (shouldShowPath)
-                  Positioned.fill(
-                    child: CustomPaint(
-                      painter: _MovementOverlayPainter(
-                        planRect: planRect,
-                        path: _movementPath(snapshot),
-                        color: _trailColor(snapshot.status),
-                      ),
-                    ),
-                  ),
-                if (snapshot.locationSharingEnabled)
-                  AnimatedPositioned(
-                    duration: const Duration(milliseconds: 180),
-                    curve: Curves.easeOutCubic,
-                    left: (personPosition.dx - markerSize / 2)
-                        .clamp(8.0, size.width - markerSize - 8)
-                        .toDouble(),
-                    top: (personPosition.dy - markerSize / 2)
-                        .clamp(8.0, size.height - markerSize - 8)
-                        .toDouble(),
-                    child: SizedBox(
-                      width: markerSize,
-                      height: markerSize,
-                      child: MiniPersonMarker(snapshot: snapshot),
-                    ),
-                  ),
-                if (!snapshot.locationSharingEnabled) const _LocationHiddenOverlay(),
               ],
             ),
           );
@@ -77,40 +192,20 @@ class FloorPlanView extends StatelessWidget {
   }
 }
 
-Rect _planRectFor(Size size, {required bool compact}) {
-  final horizontalPadding = compact ? 10.0 : 16.0;
-  final topPadding = compact ? 10.0 : 16.0;
-  final legendHeight = compact ? 30.0 : 38.0;
-  final availableWidth = size.width - horizontalPadding * 2;
-  final availableHeight = size.height - topPadding * 2 - legendHeight;
-
-  var width = availableWidth;
-  var height = width / _planAspectRatio;
-  if (height > availableHeight) {
-    height = availableHeight;
-    width = height * _planAspectRatio;
-  }
-
-  return Rect.fromLTWH((size.width - width) / 2, topPadding, width, height);
-}
-
-Rect _roomRect(Rect planRect, double x, double y, double w, double h) {
-  return Rect.fromLTWH(
-    planRect.left + planRect.width * x,
-    planRect.top + planRect.height * y,
-    planRect.width * w,
-    planRect.height * h,
-  );
-}
-
 Offset _toPlanOffset(Rect planRect, Offset point) {
   final x = point.dx.clamp(0.0, 1.0).toDouble();
   final y = point.dy.clamp(0.0, 1.0).toDouble();
-  return Offset(planRect.left + planRect.width * x, planRect.top + planRect.height * y);
+  return Offset(
+    planRect.left + planRect.width * x,
+    planRect.top + planRect.height * y,
+  );
 }
 
 Offset _personPoint(SafetySnapshot snapshot) {
-  return Offset(snapshot.x.clamp(0.0, 1.0).toDouble(), snapshot.y.clamp(0.0, 1.0).toDouble());
+  return Offset(
+    snapshot.x.clamp(0.0, 1.0).toDouble(),
+    snapshot.y.clamp(0.0, 1.0).toDouble(),
+  );
 }
 
 Color _trailColor(SafetyStatus status) {
@@ -125,7 +220,10 @@ Color _trailColor(SafetyStatus status) {
 List<Offset> _movementPath(SafetySnapshot snapshot) {
   final cleaned = snapshot.movementPath
       .map(
-        (point) => Offset(point.dx.clamp(0.0, 1.0).toDouble(), point.dy.clamp(0.0, 1.0).toDouble()),
+        (point) => Offset(
+          point.dx.clamp(0.0, 1.0).toDouble(),
+          point.dy.clamp(0.0, 1.0).toDouble(),
+        ),
       )
       .toList();
 
@@ -149,551 +247,12 @@ List<Offset> _movementPath(SafetySnapshot snapshot) {
   ];
 }
 
-class _FloorPlanPainter extends CustomPainter {
-  const _FloorPlanPainter({required this.planRect, required this.compact});
-
-  final Rect planRect;
-  final bool compact;
-
-  static const _wall = Color(0xFF303948);
-  static const _thinLine = Color(0xFFD8DEE9);
-  static const _grid = Color(0xFFE8EDF5);
-  static const _label = Color(0xFF162033);
-  static const _furnitureStroke = Color(0xFF9AA6B8);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    _drawBase(canvas, size);
-    _drawRooms(canvas);
-    _drawGrid(canvas);
-    _drawWalls(canvas);
-    _drawDoorsAndWindows(canvas);
-    _drawFurniture(canvas);
-    _drawSensorsAndRouter(canvas);
-    _drawLegend(canvas, size);
-  }
-
-  void _drawBase(Canvas canvas, Size size) {
-    final background = RRect.fromRectAndRadius(
-      Offset.zero & size,
-      Radius.circular(compact ? 24 : 30),
-    );
-    canvas.drawRRect(background, Paint()..color = const Color(0xFFF8FAFF));
-    canvas.drawRRect(
-      background.deflate(0.5),
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1
-        ..color = const Color(0xFFE5EBF5),
-    );
-  }
-
-  void _drawRooms(Canvas canvas) {
-    _drawRoom(
-      canvas,
-      rect: _roomRect(planRect, 0.00, 0.00, 0.50, 0.39),
-      label: '침실-2',
-      fill: const Color(0xFFF7FAFF),
-    );
-    _drawRoom(
-      canvas,
-      rect: _roomRect(planRect, 0.50, 0.00, 0.50, 0.255),
-      label: '주방',
-      fill: const Color(0xFFFFF0BF),
-    );
-    _drawRoom(
-      canvas,
-      rect: _roomRect(planRect, 0.00, 0.39, 0.50, 0.175),
-      label: '거실',
-      fill: const Color(0xFFEAF7F1),
-    );
-    _drawRoom(
-      canvas,
-      rect: _roomRect(planRect, 0.50, 0.255, 0.22, 0.31),
-      label: '욕실',
-      fill: const Color(0xFFDFF5F8),
-    );
-    _drawRoom(
-      canvas,
-      rect: _roomRect(planRect, 0.00, 0.565, 0.50, 0.435),
-      label: '침실-1',
-      fill: const Color(0xFFE7F0FF),
-    );
-    _drawRoom(
-      canvas,
-      rect: _roomRect(planRect, 0.50, 0.565, 0.50, 0.435),
-      label: '현관',
-      fill: const Color(0xFFF0DDF5),
-    );
-    _drawRoom(
-      canvas,
-      rect: _roomRect(planRect, 0.72, 0.255, 0.28, 0.31),
-      label: '현관',
-      fill: const Color(0xFFF0DDF5),
-      showLabel: false,
-    );
-  }
-
-  void _drawRoom(
-    Canvas canvas, {
-    required Rect rect,
-    required String label,
-    required Color fill,
-    bool showLabel = true,
-  }) {
-    canvas.drawRect(rect, Paint()..color = fill);
-    canvas.drawRect(
-      rect,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.8
-        ..color = _thinLine,
-    );
-    if (showLabel) {
-      _drawText(
-        canvas,
-        label,
-        rect.topLeft + const Offset(8, 8),
-        fontSize: compact ? 9.5 : 11,
-        fontWeight: FontWeight.w900,
-      );
-    }
-  }
-
-  void _drawGrid(Canvas canvas) {
-    final paint = Paint()
-      ..color = _grid.withValues(alpha: 0.70)
-      ..strokeWidth = 0.55;
-
-    for (var i = 1; i < 10; i++) {
-      final x = planRect.left + planRect.width * i / 10;
-      canvas.drawLine(Offset(x, planRect.top), Offset(x, planRect.bottom), paint);
-    }
-    for (var i = 1; i < 18; i++) {
-      final y = planRect.top + planRect.height * i / 18;
-      canvas.drawLine(Offset(planRect.left, y), Offset(planRect.right, y), paint);
-    }
-  }
-
-  void _drawWalls(Canvas canvas) {
-    final wallPaint = Paint()
-      ..color = _wall
-      ..strokeWidth = compact ? 2.6 : 3.4
-      ..style = PaintingStyle.stroke
-      ..strokeJoin = StrokeJoin.miter;
-
-    canvas.drawRect(planRect, wallPaint);
-    _line(canvas, 0.50, 0.00, 0.50, 1.00, wallPaint);
-    _line(canvas, 0.00, 0.39, 1.00, 0.39, wallPaint);
-    _line(canvas, 0.00, 0.565, 0.50, 0.565, wallPaint);
-    _line(canvas, 0.50, 0.255, 1.00, 0.255, wallPaint);
-    _line(canvas, 0.72, 0.255, 0.72, 0.565, wallPaint);
-    _line(canvas, 0.50, 0.565, 1.00, 0.565, wallPaint);
-    _line(canvas, 0.72, 0.565, 0.72, 1.00, wallPaint);
-    _line(canvas, 0.72, 0.72, 1.00, 0.72, wallPaint);
-  }
-
-  void _line(Canvas canvas, double x1, double y1, double x2, double y2, Paint paint) {
-    canvas.drawLine(
-      _toPlanOffset(planRect, Offset(x1, y1)),
-      _toPlanOffset(planRect, Offset(x2, y2)),
-      paint,
-    );
-  }
-
-  void _drawDoorsAndWindows(Canvas canvas) {
-    final doorPaint = Paint()
-      ..color = const Color(0xFF5E6A7C)
-      ..strokeWidth = compact ? 1.2 : 1.6
-      ..style = PaintingStyle.stroke;
-    final windowPaint = Paint()
-      ..color = const Color(0xFF5EB6E6)
-      ..strokeWidth = compact ? 1.1 : 1.5
-      ..strokeCap = StrokeCap.round;
-
-    _door(canvas, const Offset(0.50, 0.39), 0.14, 0, -math.pi / 2, doorPaint);
-    _door(canvas, const Offset(0.72, 0.565), 0.11, math.pi, math.pi / 2, doorPaint);
-    _door(canvas, const Offset(0.72, 0.755), 0.12, -math.pi, -math.pi / 2, doorPaint);
-    _door(canvas, const Offset(1.00, 0.79), 0.13, math.pi, math.pi / 2, doorPaint);
-
-    _window(canvas, const Offset(0.06, 0.00), const Offset(0.38, 0.00), windowPaint);
-    _window(canvas, const Offset(0.62, 0.00), const Offset(0.92, 0.00), windowPaint);
-    _window(canvas, const Offset(0.00, 0.43), const Offset(0.00, 0.54), windowPaint);
-    _window(canvas, const Offset(0.14, 1.00), const Offset(0.42, 1.00), windowPaint);
-    _window(canvas, const Offset(1.00, 0.32), const Offset(1.00, 0.53), windowPaint);
-  }
-
-  void _door(
-    Canvas canvas,
-    Offset hinge,
-    double radiusRatio,
-    double start,
-    double sweep,
-    Paint paint,
-  ) {
-    final center = _toPlanOffset(planRect, hinge);
-    final radius = planRect.width * radiusRatio;
-    canvas.drawArc(Rect.fromCircle(center: center, radius: radius), start, sweep, false, paint);
-    final end = center + Offset(math.cos(start + sweep), math.sin(start + sweep)) * radius;
-    canvas.drawLine(center, end, paint);
-  }
-
-  void _window(Canvas canvas, Offset start, Offset end, Paint paint) {
-    canvas.drawLine(_toPlanOffset(planRect, start), _toPlanOffset(planRect, end), paint);
-  }
-
-  void _drawFurniture(Canvas canvas) {
-    _drawBed(canvas, _roomRect(planRect, 0.07, 0.12, 0.32, 0.13));
-    _drawWardrobe(canvas, _roomRect(planRect, 0.41, 0.09, 0.055, 0.23));
-    _drawDesk(canvas, _roomRect(planRect, 0.09, 0.31, 0.23, 0.055));
-
-    _drawKitchenCounter(canvas, _roomRect(planRect, 0.56, 0.12, 0.32, 0.10));
-    _drawFridge(canvas, _roomRect(planRect, 0.89, 0.05, 0.07, 0.17));
-
-    _drawSofa(canvas, _roomRect(planRect, 0.07, 0.42, 0.26, 0.075));
-    _drawCoffeeTable(canvas, _roomRect(planRect, 0.36, 0.43, 0.12, 0.06));
-    _drawTvStand(canvas, _roomRect(planRect, 0.09, 0.535, 0.30, 0.025));
-
-    _drawBath(canvas, _roomRect(planRect, 0.55, 0.41, 0.085, 0.14));
-    _drawToilet(canvas, _roomRect(planRect, 0.66, 0.34, 0.045, 0.075));
-    _drawSink(canvas, _roomRect(planRect, 0.66, 0.50, 0.05, 0.075));
-
-    _drawBed(canvas, _roomRect(planRect, 0.07, 0.70, 0.36, 0.17), doubleBed: true);
-    _drawBench(canvas, _roomRect(planRect, 0.07, 0.93, 0.36, 0.035));
-    _drawWardrobe(canvas, _roomRect(planRect, 0.43, 0.64, 0.05, 0.22));
-
-    _drawShoeCabinet(canvas, _roomRect(planRect, 0.77, 0.73, 0.10, 0.18));
-    _drawBench(canvas, _roomRect(planRect, 0.56, 0.92, 0.29, 0.05));
-  }
-
-  void _drawBed(Canvas canvas, Rect rect, {bool doubleBed = false}) {
-    _rounded(canvas, rect, const Color(0xFFDCE8F8));
-    _rounded(canvas, rect.deflate(4), const Color(0xFFEAF2FF), stroke: true);
-    final pillowW = rect.width * (doubleBed ? 0.32 : 0.38);
-    final pillowH = rect.height * 0.22;
-    _rounded(
-      canvas,
-      Rect.fromLTWH(rect.left + 6, rect.top + 7, pillowW, pillowH),
-      Colors.white.withValues(alpha: 0.82),
-      radius: 4,
-      stroke: true,
-    );
-    if (doubleBed) {
-      _rounded(
-        canvas,
-        Rect.fromLTWH(rect.right - pillowW - 6, rect.top + 7, pillowW, pillowH),
-        Colors.white.withValues(alpha: 0.82),
-        radius: 4,
-        stroke: true,
-      );
-    }
-    canvas.drawLine(
-      Offset(rect.left + 8, rect.center.dy),
-      Offset(rect.right - 8, rect.center.dy),
-      Paint()
-        ..color = Colors.white.withValues(alpha: 0.75)
-        ..strokeWidth = 1.2,
-    );
-  }
-
-  void _drawWardrobe(Canvas canvas, Rect rect) {
-    _rounded(canvas, rect, const Color(0xFFD4C18B), radius: 6);
-    canvas.drawLine(
-      Offset(rect.center.dx, rect.top + 4),
-      Offset(rect.center.dx, rect.bottom - 4),
-      Paint()
-        ..color = Colors.white.withValues(alpha: 0.52)
-        ..strokeWidth = 0.8,
-    );
-  }
-
-  void _drawDesk(Canvas canvas, Rect rect) {
-    _rounded(canvas, rect, const Color(0xFFDFCF99), radius: 5);
-    final chair = Rect.fromCenter(
-      center: Offset(rect.center.dx, rect.bottom + rect.height * 0.45),
-      width: rect.width * 0.24,
-      height: rect.height * 0.55,
-    );
-    _rounded(canvas, chair, const Color(0xFFB4C4B8), radius: 4);
-  }
-
-  void _drawKitchenCounter(Canvas canvas, Rect rect) {
-    _rounded(canvas, rect, const Color(0xFFE0C98A), radius: 5);
-    final sink = Rect.fromLTWH(rect.left + 6, rect.top + 4, rect.width * 0.20, rect.height - 8);
-    canvas.drawOval(sink, Paint()..color = Colors.white.withValues(alpha: 0.78));
-    for (var i = 0; i < 4; i++) {
-      final cx = rect.right - 8 - i * 9;
-      canvas.drawCircle(
-        Offset(cx, rect.center.dy),
-        3.2,
-        Paint()..color = Colors.white.withValues(alpha: 0.75),
-      );
-    }
-  }
-
-  void _drawFridge(Canvas canvas, Rect rect) {
-    _rounded(canvas, rect, const Color(0xFFE8EEF8), radius: 5, stroke: true);
-    canvas.drawLine(
-      Offset(rect.left + 3, rect.center.dy),
-      Offset(rect.right - 3, rect.center.dy),
-      Paint()
-        ..color = _furnitureStroke.withValues(alpha: 0.55)
-        ..strokeWidth = 0.8,
-    );
-  }
-
-  void _drawSofa(Canvas canvas, Rect rect) {
-    _rounded(canvas, rect, const Color(0xFFB6C9BC), radius: 8);
-    canvas.drawLine(
-      Offset(rect.left + rect.width * 0.33, rect.top + 4),
-      Offset(rect.left + rect.width * 0.33, rect.bottom - 4),
-      Paint()
-        ..color = Colors.white.withValues(alpha: 0.35)
-        ..strokeWidth = 0.8,
-    );
-    canvas.drawLine(
-      Offset(rect.left + rect.width * 0.66, rect.top + 4),
-      Offset(rect.left + rect.width * 0.66, rect.bottom - 4),
-      Paint()
-        ..color = Colors.white.withValues(alpha: 0.35)
-        ..strokeWidth = 0.8,
-    );
-  }
-
-  void _drawCoffeeTable(Canvas canvas, Rect rect) {
-    _rounded(canvas, rect, const Color(0xFFD9C78A), radius: 5);
-    canvas.drawCircle(
-      rect.centerLeft + Offset(rect.width * 0.35, 0),
-      4,
-      Paint()..color = Colors.white,
-    );
-    canvas.drawCircle(
-      rect.centerRight - Offset(rect.width * 0.35, 0),
-      4,
-      Paint()..color = Colors.white,
-    );
-  }
-
-  void _drawTvStand(Canvas canvas, Rect rect) {
-    _rounded(canvas, rect, const Color(0xFF9CA9B8), radius: 3);
-  }
-
-  void _drawBath(Canvas canvas, Rect rect) {
-    _rounded(canvas, rect, const Color(0xFF9DCCD5), radius: 7);
-    canvas.drawOval(rect.deflate(5), Paint()..color = Colors.white.withValues(alpha: 0.80));
-  }
-
-  void _drawToilet(Canvas canvas, Rect rect) {
-    _rounded(canvas, rect, const Color(0xFFEAF2F5), radius: 4, stroke: true);
-    canvas.drawOval(rect.deflate(3), Paint()..color = Colors.white);
-  }
-
-  void _drawSink(Canvas canvas, Rect rect) {
-    _rounded(canvas, rect, const Color(0xFFEAF2F5), radius: 4, stroke: true);
-    canvas.drawCircle(rect.center, rect.shortestSide * 0.34, Paint()..color = Colors.white);
-  }
-
-  void _drawShoeCabinet(Canvas canvas, Rect rect) {
-    _rounded(canvas, rect, const Color(0xFFC49BD4), radius: 7);
-  }
-
-  void _drawBench(Canvas canvas, Rect rect) {
-    _rounded(canvas, rect, const Color(0xFFB7C2CA), radius: 4);
-  }
-
-  void _rounded(Canvas canvas, Rect rect, Color color, {double radius = 8, bool stroke = false}) {
-    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(radius));
-    canvas.drawRRect(
-      rrect,
-      Paint()
-        ..color = stroke ? _furnitureStroke.withValues(alpha: 0.60) : color
-        ..style = stroke ? PaintingStyle.stroke : PaintingStyle.fill
-        ..strokeWidth = 1,
-    );
-  }
-
-  void _drawSensorsAndRouter(Canvas canvas) {
-    _drawSensorNode(
-      canvas,
-      point: planRect.topLeft,
-      label: 'ESP32-1',
-      subLabel: compact ? null : '(0,0)',
-      alignRight: true,
-      alignBottom: true,
-    );
-    _drawSensorNode(
-      canvas,
-      point: planRect.topRight,
-      label: 'ESP32-2',
-      subLabel: compact ? null : '수신',
-      alignRight: false,
-      alignBottom: true,
-    );
-    _drawSensorNode(
-      canvas,
-      point: planRect.bottomLeft,
-      label: 'ESP32-3',
-      subLabel: compact ? null : '수신',
-      alignRight: true,
-      alignBottom: false,
-    );
-    _drawSensorNode(
-      canvas,
-      point: planRect.bottomRight,
-      label: 'ESP32-4',
-      subLabel: compact ? null : '수신',
-      alignRight: false,
-      alignBottom: false,
-    );
-
-    final router = _roomRect(planRect, 0.74, 0.88, 0.20, 0.06);
-    _rounded(canvas, router, Colors.white, radius: 5, stroke: true);
-    _drawText(
-      canvas,
-      'ipTIME AP',
-      router.centerLeft + const Offset(7, -5),
-      fontSize: compact ? 6.5 : 7.5,
-      color: const Color(0xFF536176),
-      fontWeight: FontWeight.w800,
-    );
-    final wifiCenter = Offset(router.left + 9, router.center.dy);
-    final wifiPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
-      ..color = AppColors.primary;
-    for (var i = 1; i <= 3; i++) {
-      canvas.drawArc(
-        Rect.fromCircle(center: wifiCenter, radius: i * 3.0),
-        -math.pi * 0.78,
-        math.pi * 0.56,
-        false,
-        wifiPaint,
-      );
-    }
-  }
-
-  void _drawSensorNode(
-    Canvas canvas, {
-    required Offset point,
-    required String label,
-    required bool alignRight,
-    required bool alignBottom,
-    String? subLabel,
-  }) {
-    final outerPaint = Paint()..color = Colors.white.withValues(alpha: 0.96);
-    final ringPaint = Paint()..color = AppColors.success.withValues(alpha: compact ? 0.24 : 0.18);
-    final haloPaint = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = compact ? 2.4 : 2.8
-      ..color = AppColors.success.withValues(alpha: 0.62);
-    final corePaint = Paint()..color = AppColors.success;
-
-    canvas.drawCircle(point, compact ? 14 : 18, outerPaint);
-    canvas.drawCircle(point, compact ? 13 : 17, ringPaint);
-    canvas.drawCircle(point, compact ? 9.5 : 12, haloPaint);
-    canvas.drawCircle(point, compact ? 6.0 : 7.6, corePaint);
-
-    final labelWidth = compact ? 54.0 : 64.0;
-    final labelHeight = compact ? 18.0 : 27.0;
-    final dx = alignRight ? 10.0 : -labelWidth - 10.0;
-    final dy = alignBottom ? 4.0 : -labelHeight - 4.0;
-    final rect = Rect.fromLTWH(point.dx + dx, point.dy + dy, labelWidth, labelHeight);
-    final rrect = RRect.fromRectAndRadius(rect, Radius.circular(compact ? 7 : 9));
-
-    canvas.drawRRect(
-      rrect,
-      Paint()..color = const Color(0xFFECFFF7).withValues(alpha: 0.96),
-    );
-    canvas.drawRRect(
-      rrect,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = compact ? 0.8 : 1.1
-        ..color = AppColors.success.withValues(alpha: 0.48),
-    );
-    _drawText(
-      canvas,
-      label,
-      rect.topLeft + Offset(compact ? 6 : 7, compact ? 5.0 : 5.0),
-      fontSize: compact ? 7.5 : 8.8,
-      color: const Color(0xFF0A8D65),
-      fontWeight: FontWeight.w900,
-    );
-    if (subLabel != null) {
-      _drawText(
-        canvas,
-        subLabel,
-        rect.topLeft + const Offset(7, 16.3),
-        fontSize: 6.4,
-        color: const Color(0xFF477965),
-        fontWeight: FontWeight.w800,
-      );
-    }
-  }
-
-  void _drawLegend(Canvas canvas, Size size) {
-    final top = planRect.bottom + (compact ? 8 : 10);
-    final rect = Rect.fromCenter(
-      center: Offset(size.width / 2, top + 12),
-      width: math.min(size.width - 28, compact ? 180 : 220),
-      height: compact ? 24 : 28,
-    );
-    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(999));
-    canvas.drawRRect(rrect, Paint()..color = Colors.white.withValues(alpha: 0.92));
-    canvas.drawRRect(
-      rrect,
-      Paint()
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.8
-        ..color = const Color(0xFFE4EAF4),
-    );
-
-    var x = rect.left + 12;
-    x = _legendItem(canvas, Offset(x, rect.center.dy), AppColors.success, 'ESP32-S3 수신 노드');
-    _legendItem(canvas, Offset(x + 10, rect.center.dy), AppColors.primary, '실제 AP 위치');
-  }
-
-  double _legendItem(Canvas canvas, Offset origin, Color color, String label) {
-    canvas.drawCircle(origin, compact ? 2.8 : 3.3, Paint()..color = color);
-    final width = _drawText(
-      canvas,
-      label,
-      origin + Offset(compact ? 7 : 8, compact ? -5.4 : -6),
-      fontSize: compact ? 7.2 : 8.2,
-      color: const Color(0xFF657086),
-      fontWeight: FontWeight.w800,
-    );
-    return origin.dx + width + (compact ? 18 : 22);
-  }
-
-  double _drawText(
-    Canvas canvas,
-    String text,
-    Offset offset, {
-    double fontSize = 10,
-    Color color = _label,
-    FontWeight fontWeight = FontWeight.w700,
-  }) {
-    final painter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(color: color, fontSize: fontSize, fontWeight: fontWeight, height: 1),
-      ),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-    )..layout();
-    painter.paint(canvas, offset);
-    return painter.width;
-  }
-
-  @override
-  bool shouldRepaint(covariant _FloorPlanPainter oldDelegate) {
-    return oldDelegate.planRect != planRect || oldDelegate.compact != compact;
-  }
-}
-
 class _MovementOverlayPainter extends CustomPainter {
-  const _MovementOverlayPainter({required this.planRect, required this.path, required this.color});
+  const _MovementOverlayPainter({
+    required this.planRect,
+    required this.path,
+    required this.color,
+  });
 
   final Rect planRect;
   final List<Offset> path;
@@ -703,14 +262,18 @@ class _MovementOverlayPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (path.length < 2) return;
 
-    final rawPoints = path.map((point) => _toPlanOffset(planRect, point)).toList();
+    final rawPoints = path
+        .map((point) => _toPlanOffset(planRect, point))
+        .toList();
     final points = _smoothPoints(rawPoints);
     _drawHumanAfterImages(canvas, points);
   }
 
   List<Offset> _smoothPoints(List<Offset> source) {
     if (source.length < 2) return source;
-    if (source.length == 2) return _interpolateSegment(source.first, source.last, 10);
+    if (source.length == 2) {
+      return _interpolateSegment(source.first, source.last, 10);
+    }
 
     final result = <Offset>[];
     for (var i = 0; i < source.length - 1; i++) {
@@ -757,7 +320,10 @@ class _MovementOverlayPainter extends CustomPainter {
     final ghostCount = math.min(4, points.length);
     for (var ghostIndex = 0; ghostIndex < ghostCount; ghostIndex++) {
       final t = ghostCount == 1 ? 1.0 : ghostIndex / (ghostCount - 1);
-      final sourceIndex = ((points.length - 1) * t).round().clamp(0, points.length - 1).toInt();
+      final sourceIndex = ((points.length - 1) * t)
+          .round()
+          .clamp(0, points.length - 1)
+          .toInt();
       final point = points[sourceIndex];
       final isLatest = ghostIndex == ghostCount - 1;
       final alpha = isLatest ? 0.42 : 0.12 + ghostIndex * 0.075;
@@ -766,7 +332,14 @@ class _MovementOverlayPainter extends CustomPainter {
       final next = points[math.min(points.length - 1, sourceIndex + 1)];
       final angle = _movementAngle(previous, next);
 
-      _drawHumanGhost(canvas, point, angle: angle, alpha: alpha, scale: scale, latest: isLatest);
+      _drawHumanGhost(
+        canvas,
+        point,
+        angle: angle,
+        alpha: alpha,
+        scale: scale,
+        latest: isLatest,
+      );
     }
   }
 
@@ -855,7 +428,10 @@ class MiniPersonMarker extends StatelessWidget {
         child: Container(
           width: 38,
           height: 38,
-          decoration: BoxDecoration(color: color.withValues(alpha: 0.18), shape: BoxShape.circle),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.18),
+            shape: BoxShape.circle,
+          ),
           child: CustomPaint(
             painter: _PersonPainter(color: color, danger: isDanger),
           ),
@@ -879,7 +455,11 @@ class _PersonPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
     final center = Offset(size.width / 2, size.height / 2);
 
-    canvas.drawCircle(Offset(center.dx, size.height * 0.25), 5, Paint()..color = color);
+    canvas.drawCircle(
+      Offset(center.dx, size.height * 0.25),
+      5,
+      Paint()..color = color,
+    );
     canvas.drawLine(
       Offset(center.dx, size.height * 0.36),
       Offset(center.dx, size.height * 0.62),
@@ -907,7 +487,11 @@ class _PersonPainter extends CustomPainter {
     );
 
     if (danger) {
-      canvas.drawCircle(center, size.width * 0.54, Paint()..color = color.withValues(alpha: 0.12));
+      canvas.drawCircle(
+        center,
+        size.width * 0.54,
+        Paint()..color = color.withValues(alpha: 0.12),
+      );
     }
   }
 
@@ -943,7 +527,10 @@ class _LocationHiddenOverlay extends StatelessWidget {
                 child: Text(
                   '피보호자가 위치 공유를 꺼두었어요',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.text, fontWeight: FontWeight.w900),
+                  style: TextStyle(
+                    color: AppColors.text,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
             ],

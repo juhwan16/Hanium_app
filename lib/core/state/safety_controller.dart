@@ -12,7 +12,8 @@ import '../services/safety_notification_bridge.dart';
 import '../services/safety_repository.dart';
 
 class SafetyController extends ChangeNotifier {
-  SafetyController(this.repository, {LocalSafetyCache? cache}) : cache = cache ?? const LocalSafetyCache();
+  SafetyController(this.repository, {LocalSafetyCache? cache})
+    : cache = cache ?? const LocalSafetyCache();
 
   final SafetyRepository repository;
   final LocalSafetyCache cache;
@@ -281,12 +282,12 @@ class SafetyController extends ChangeNotifier {
     unawaited(_pollLatestLocation());
   }
 
-
   void _startAlertPolling() {
     _alertPollTimer ??= Timer.periodic(const Duration(seconds: 4), (_) {
       unawaited(refreshAlerts());
     });
   }
+
   Future<void> _pollLatestLocation() async {
     if (_pollingLocation) return;
     _pollingLocation = true;
@@ -331,7 +332,9 @@ class SafetyController extends ChangeNotifier {
     final emergencyInfo = data['emergencyInfo'];
     if (emergencyInfo is Map) {
       next = next.copyWith(
-        emergencyInfo: EmergencyInfo.fromJson(Map<String, dynamic>.from(emergencyInfo)),
+        emergencyInfo: EmergencyInfo.fromJson(
+          Map<String, dynamic>.from(emergencyInfo),
+        ),
       );
     }
 
@@ -380,13 +383,17 @@ class SafetyController extends ChangeNotifier {
         ? RoomResolver.normalize(map['room'], x, y)
         : cleanText(map['room'], '위치 공유 꺼짐');
     final pose = cleanText(map['pose'], poseFromStatus(status));
-    final confidence = normalizedDouble(map['confidence'], _snapshot.confidence);
+    final confidence = normalizedDouble(
+      map['confidence'],
+      _snapshot.confidence,
+    );
     final dataSource = cleanText(map['source'], 'sensor');
     final rawBreathingRate =
         map['breathingRate'] ?? map['respirationRate'] ?? map['breathRate'];
     final breathingEstimated = rawBreathingRate == null;
     final breathingRate =
-        optionalBoundedDouble(rawBreathingRate, min: 6, max: 36) ?? breathingRateForStatus(status);
+        optionalBoundedDouble(rawBreathingRate, min: 6, max: 36) ??
+        breathingRateForStatus(status);
     final breathingConfidence = normalizedDouble(
       map['breathingConfidence'] ?? map['respirationConfidence'],
       breathingEstimated ? 0.66 : _snapshot.breathingConfidence,
@@ -410,7 +417,10 @@ class SafetyController extends ChangeNotifier {
     if (status != SafetyStatus.normal) {
       final liveAlert = AlertEvent.fromStatus(status, room: room);
       _showSafetyNotification(liveAlert);
-      alerts = [liveAlert, ...alerts.where((alert) => alert.status != status)].take(40).toList();
+      alerts = [
+        liveAlert,
+        ...alerts.where((alert) => alert.status != status),
+      ].take(40).toList();
     }
 
     _snapshot = _snapshot.copyWith(
@@ -433,7 +443,6 @@ class SafetyController extends ChangeNotifier {
     notifyListeners();
     _queueCacheSave();
   }
-
 
   void _notifyNewServerAlerts(List<AlertEvent> alerts) {
     if (!_serverAlertsPrimed) {
@@ -458,17 +467,15 @@ class SafetyController extends ChangeNotifier {
     }
   }
 
-  void _showSafetyNotification(
-    AlertEvent alert, {
-    bool allowNormal = false,
-  }) {
+  void _showSafetyNotification(AlertEvent alert, {bool allowNormal = false}) {
     if (alert.resolved) return;
     if (!allowNormal && alert.status == SafetyStatus.normal) return;
 
     final now = DateTime.now();
     final key = '${alert.status}|${alert.room}';
     if (key == _lastSafetyNotificationKey &&
-        now.difference(_lastSafetyNotificationAt) < const Duration(seconds: 12)) {
+        now.difference(_lastSafetyNotificationAt) <
+            const Duration(seconds: 12)) {
       return;
     }
 
@@ -478,26 +485,35 @@ class SafetyController extends ChangeNotifier {
       SafetyNotificationBridge.showAlert(alert, allowNormal: allowNormal),
     );
   }
+
   void _markServerSeen(String note) {
     _lastServerSeen = DateTime.now();
     if (!_snapshot.serverConnected || _snapshot.connectionNote != note) {
-      _snapshot = _snapshot.copyWith(serverConnected: true, connectionNote: note);
+      _snapshot = _snapshot.copyWith(
+        serverConnected: true,
+        connectionNote: note,
+      );
       notifyListeners();
     }
   }
 
   void _markDisconnectedIfStale() {
-    if (DateTime.now().difference(_lastServerSeen) < const Duration(seconds: 8)) {
+    if (DateTime.now().difference(_lastServerSeen) <
+        const Duration(seconds: 8)) {
       return;
     }
     _setConnection(false, '최근 상태를 다시 확인 중');
   }
 
   void _setConnection(bool connected, String note) {
-    if (_snapshot.serverConnected == connected && _snapshot.connectionNote == note) {
+    if (_snapshot.serverConnected == connected &&
+        _snapshot.connectionNote == note) {
       return;
     }
-    _snapshot = _snapshot.copyWith(serverConnected: connected, connectionNote: note);
+    _snapshot = _snapshot.copyWith(
+      serverConnected: connected,
+      connectionNote: note,
+    );
     notifyListeners();
   }
 
@@ -511,9 +527,9 @@ class SafetyController extends ChangeNotifier {
   (double, double, String) _scenarioPreset(SafetyStatus status) {
     return switch (status) {
       SafetyStatus.normal => (0.35, 0.45, RoomResolver.living),
-      SafetyStatus.out => (0.76, 0.66, RoomResolver.entrance),
+      SafetyStatus.out => (0.68, 0.045, RoomResolver.entrance),
       SafetyStatus.still => (0.31, 0.68, RoomResolver.bedroom),
-      SafetyStatus.danger => (0.78, 0.70, RoomResolver.entrance),
+      SafetyStatus.danger => (0.55, 0.60, RoomResolver.livingSpace),
     };
   }
 

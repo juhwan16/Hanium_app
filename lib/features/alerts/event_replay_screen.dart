@@ -580,8 +580,8 @@ class _ReplayFrame {
   static List<_ReplayFrame> buildFor(AlertEvent alert, SafetySnapshot base) {
     final target = _targetPoint(alert, base);
     final start = Offset(
-      (target.dx - 0.24).clamp(0.10, 0.88).toDouble(),
-      (target.dy - 0.20).clamp(0.10, 0.88).toDouble(),
+      target.dx,
+      (target.dy + 0.04).clamp(0.0, 1.0).toDouble(),
     );
     final isDanger = alert.status == SafetyStatus.danger;
     final attentionStatus = isDanger ? SafetyStatus.out : alert.status;
@@ -638,12 +638,8 @@ class _ReplayFrame {
   }
 
   static Offset _targetPoint(AlertEvent alert, SafetySnapshot base) {
-    if (alert.room == RoomResolver.bedroom2) return const Offset(0.25, 0.18);
-    if (alert.room == RoomResolver.kitchen) return const Offset(0.73, 0.17);
-    if (alert.room == RoomResolver.living) return const Offset(0.32, 0.44);
-    if (alert.room == RoomResolver.bathroom) return const Offset(0.64, 0.44);
-    if (alert.room == RoomResolver.bedroom) return const Offset(0.30, 0.78);
-    if (alert.room == RoomResolver.entrance) return const Offset(0.78, 0.76);
+    final point = RoomResolver.representativePoint(alert.room);
+    if (point != null) return point;
 
     return Offset(
       base.x.clamp(0.10, 0.90).toDouble(),

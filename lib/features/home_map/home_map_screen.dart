@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../app/app_theme.dart';
@@ -27,18 +29,32 @@ class HomeMapScreen extends StatelessWidget {
                 _FigmaHeader(snapshot: snapshot),
                 const SizedBox(height: 18),
                 Expanded(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      children: [
-                        _FigmaMapCard(
-                          snapshot: snapshot,
-                          onExpand: () => _showExpandedMap(context),
-                          onGuide: () => _showMapGuide(context),
+                  child: LayoutBuilder(
+                    builder: (context, viewport) {
+                      final textScale =
+                          MediaQuery.textScalerOf(context).scale(14) / 14;
+                      final mapHeight = math.max(
+                        180.0,
+                        math.min(
+                          620.0,
+                          viewport.maxHeight - 140 - (textScale - 1) * 48,
                         ),
-                        const SizedBox(height: 16),
-                        _FigmaStatusCard(snapshot: snapshot),
-                      ],
-                    ),
+                      );
+                      return SingleChildScrollView(
+                        child: Column(
+                          children: [
+                            _FigmaMapCard(
+                              mapHeight: mapHeight,
+                              snapshot: snapshot,
+                              onExpand: () => _showExpandedMap(context),
+                              onGuide: () => _showMapGuide(context),
+                            ),
+                            const SizedBox(height: 16),
+                            _FigmaStatusCard(snapshot: snapshot),
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -59,11 +75,15 @@ class HomeMapScreen extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('집 안 도면 읽는 법', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+            Text(
+              '집 안 도면 읽는 법',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900),
+            ),
             SizedBox(height: 12),
             Text(
-              '도면은 일반 가정집 구조에 맞춰 ESP32-S3 수신 노드와 AP 위치를 표시해요. '
-              'ESP32-1은 (0,0) 기준점이고, 사람 아이콘은 현재 위치, 잔상은 최근 이동 흐름이에요.',
+              '위쪽은 욕실·현관·주방, 중문 아래는 침실과 생활공간이에요. '
+              '사람 아이콘은 수신된 위치, 잔상은 최근 이동 흐름을 표시해요. '
+              '실측 치수가 반영되지 않은 배치 참고용 도면이에요.',
               style: TextStyle(height: 1.5, color: AppColors.muted),
             ),
           ],
@@ -120,7 +140,9 @@ class HomeMapScreen extends StatelessWidget {
                         IconButton.filled(
                           onPressed: () => Navigator.of(context).pop(),
                           style: IconButton.styleFrom(
-                            backgroundColor: Colors.white.withValues(alpha: 0.16),
+                            backgroundColor: Colors.white.withValues(
+                              alpha: 0.16,
+                            ),
                             foregroundColor: Colors.white,
                           ),
                           icon: const Icon(Icons.close_rounded),
@@ -133,11 +155,10 @@ class HomeMapScreen extends StatelessWidget {
                         child: Hero(
                           tag: 'home-floor-plan',
                           child: InteractiveViewer(
-                            minScale: 0.9,
-                            maxScale: 3.2,
+                            minScale: 1,
+                            maxScale: 5,
                             boundaryMargin: const EdgeInsets.all(80),
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 560),
+                            child: SizedBox.expand(
                               child: FloorPlanView(snapshot: snapshot),
                             ),
                           ),
@@ -146,7 +167,10 @@ class HomeMapScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(999),
@@ -171,10 +195,9 @@ class HomeMapScreen extends StatelessWidget {
         return FadeTransition(
           opacity: animation,
           child: ScaleTransition(
-            scale: Tween<double>(
-              begin: 0.96,
-              end: 1,
-            ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+            scale: Tween<double>(begin: 0.96, end: 1).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            ),
             child: child,
           ),
         );
@@ -234,11 +257,17 @@ class _FigmaHeader extends StatelessWidget {
 }
 
 class _FigmaMapCard extends StatelessWidget {
-  const _FigmaMapCard({required this.snapshot, required this.onExpand, required this.onGuide});
+  const _FigmaMapCard({
+    required this.snapshot,
+    required this.onExpand,
+    required this.onGuide,
+    required this.mapHeight,
+  });
 
   final SafetySnapshot snapshot;
   final VoidCallback onExpand;
   final VoidCallback onGuide;
+  final double mapHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -264,35 +293,57 @@ class _FigmaMapCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: Container(
-                    height: 38,
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    constraints: const BoxConstraints(minHeight: 38),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.primarySoft,
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: const Row(
                       children: [
-                        Icon(Icons.my_location_rounded, color: AppColors.primary, size: 17),
+                        Icon(
+                          Icons.my_location_rounded,
+                          color: AppColors.primary,
+                          size: 17,
+                        ),
                         SizedBox(width: 8),
-                        Text(
-                          '현재 위치 중심',
-                          style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w900),
+                        Flexible(
+                          child: Text(
+                            '현재 위치 중심',
+                            style: TextStyle(
+                              color: AppColors.primary,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
                         ),
                       ],
                     ),
                   ),
                 ),
                 const SizedBox(width: 10),
-                _CircleAction(icon: Icons.menu_rounded, tooltip: '도면 설명 보기', onTap: onGuide),
+                _CircleAction(
+                  icon: Icons.menu_rounded,
+                  tooltip: '도면 설명 보기',
+                  onTap: onGuide,
+                ),
               ],
             ),
             const SizedBox(height: 14),
             Hero(
               tag: 'home-floor-plan',
-              child: FloorPlanView(snapshot: snapshot),
+              child: SizedBox(
+                height: mapHeight,
+                child: FloorPlanView(snapshot: snapshot),
+              ),
             ),
             const SizedBox(height: 10),
-            const TapHintLabel(icon: Icons.open_in_full_rounded, label: '도면 눌러 확대'),
+            const TapHintLabel(
+              icon: Icons.open_in_full_rounded,
+              label: '도면 눌러 확대',
+            ),
           ],
         ),
       ),
@@ -317,7 +368,9 @@ class _FigmaStatusCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: isSafe ? const Color(0xFFE8FFF5) : statusSoftColor(snapshot.status),
+        color: isSafe
+            ? const Color(0xFFE8FFF5)
+            : statusSoftColor(snapshot.status),
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: color.withValues(alpha: 0.10)),
       ),
@@ -326,7 +379,10 @@ class _FigmaStatusCard extends StatelessWidget {
           Container(
             width: 42,
             height: 42,
-            decoration: BoxDecoration(color: color.withValues(alpha: 0.15), shape: BoxShape.circle),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.15),
+              shape: BoxShape.circle,
+            ),
             child: Icon(statusIcon(snapshot.status), color: color),
           ),
           const SizedBox(width: 14),
@@ -366,7 +422,11 @@ class _FigmaStatusCard extends StatelessWidget {
 }
 
 class _CircleAction extends StatelessWidget {
-  const _CircleAction({required this.icon, required this.tooltip, required this.onTap});
+  const _CircleAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
 
   final IconData icon;
   final String tooltip;
